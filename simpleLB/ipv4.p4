@@ -22,6 +22,11 @@
 
 /*TODO: define the necesssary metadata*/
 
+/*variavel de 32 bits = tipo de saida da funcao, e que coincide com a ifnromação armezada no registrador, usada prara salvar a saida*/
+struct metadata_t {
+    bit<32> output_lb;
+}
+
 // ---------------------------------------------------------------------------
 // Ingress parser
 // ---------------------------------------------------------------------------
@@ -86,6 +91,10 @@ control SwitchIngressDeparser(
 
 /*TODO: register definition */
 
+/*definindo registrador com nome lb_counter*/
+
+Register<bit<32>, _>(1) lb_counter; 
+
 control SwitchIngress(
         inout header_t hdr,
         inout metadata_t ig_md,
@@ -93,6 +102,18 @@ control SwitchIngress(
         in ingress_intrinsic_metadata_from_parser_t ig_intr_prsr_md,
         inout ingress_intrinsic_metadata_for_deparser_t ig_intr_dprsr_md,
         inout ingress_intrinsic_metadata_for_tm_t ig_intr_tm_md) {
+
+/*criando a função para posterior chamar o registrador*/
+    RegisterAction<bit<32>, _, bit<32>>(lb_counter) check_counter = {
+        oid apply(inout bit<32> value, out bit<32> rv) {
+            if(value == 1){
+            value = 0;
+            }else{
+            value = 1;
+            }
+            rv = value;
+        }
+    };
 
 
     action drop_() {
@@ -120,16 +141,39 @@ control SwitchIngress(
 
     /* TODO: Define the action LB */
 
+    action action_lb(PortId_t port, mac_addr_t dst_mac) {
+        ig_intr_tm_md.ucast_egress_port = port;
+        hdr.ethernet.dst_addr = dst_mac;
+    }
+
     /* TODO: Define the table to match the LB parameters */
+
+    table def_lb {
+        key = {
+        hdr.ipv4.dst_addr: exact; /*destino*/
+        ig_md.output_lb: exact; /*conteudo do ipv4*/
+    }
+    actions = {
+    action_lb; /*acoes asssociadas a um match*/
+    }
+    size = 2; /*quantidade de entradas (linhas) da tabela - tabela virtual de duas entradas*/
+    }
 
     apply {
 
         if(hdr.ipv4.isValid()){
             ipv4_lpm.apply();
         }
+/*chamando a RegisterAction nome.execute (indice do registrador - posicao 0) - guardar a saida do registrador definido acima - ig_md parametro do bloco de cotrole pra dizer que eh metadado*/
+/* switch ingressdeparser*/
+        ig_md.output_lb = check_counter.execute(0);
+
 
 	/* TODO: Instantiate the register action */  
         /* TODO: Apply the table */
+        
+        /*aplicar tabela deve vir depois da execução da registeraction*/
+        def_lb.apply();
         
         ig_intr_tm_md.bypass_egress = 1w1;
     }
